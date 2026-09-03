@@ -3,9 +3,10 @@ import { Toast } from '../../components/Toast.js';
 import { confirmDialog } from '../../components/ConfirmDialog.js';
 import { SuggestList } from '../../components/SuggestList.js';
 import { openDropdownMenu } from '../../components/DropdownMenu.js';
+import { Modal } from '../../components/Modal.js';
 import { getOperatorName } from '../../core/Operator.js';
 import { can } from '../../core/Permissions.js';
-import { esc } from '../../utils/dom.js';
+import { el, esc } from '../../utils/dom.js';
 import { fmtLocalDateTime } from '../../utils/format.js';
 
 /**
@@ -180,12 +181,13 @@ export class RequisitionController {
   }
 
   /** Opens the per-row Action menu (Print's neighbor in Recent
-   * Requisitions) — Finish (or Reopen, once already finished) plus
-   * Delete, via the shared DropdownMenu component rather than a bespoke
-   * popover. "Process request" used to live here too; it now lives in
-   * Manage's own action bar (see ManageController.openProcessRequestModal)
-   * so the assets issued are exactly the ones selected in that grid,
-   * previewed and printed the same way a Manifest transfer is. */
+   * Requisitions) — Finish (or Reopen, once already finished), View log,
+   * plus Delete, via the shared DropdownMenu component rather than a
+   * bespoke popover. "Process request" used to live here too; it now
+   * lives in Manage's own action bar (see
+   * ManageController.openProcessRequestModal) so the assets issued are
+   * exactly the ones selected in that grid, previewed and printed the
+   * same way a Manifest transfer is. */
   _openRowMenu(anchor, id) {
     if (!can('requisition.action')) return;
     const requisition = this.store.get(id);
@@ -195,9 +197,93 @@ export class RequisitionController {
       pending
         ? { label: 'Finish', onClick: () => this._setStatus(id, 'finished') }
         : { label: 'Reopen', onClick: () => this._setStatus(id, 'pending') },
+      { label: 'View log', onClick: () => this._openFulfillmentLog(id) },
       { label: 'Delete', danger: true, onClick: () => this._deleteRequisition(id) }
     ];
     openDropdownMenu({ anchor, items });
+  }
+
+  /** "View log" — the counterpart to the "Finished · N issued" pill
+   * shown in Recent Requisitions once a request is Finished (see
+   * RequisitionView.renderHistory). What was *requested* (Gadget Type ×
+   * Qty, filled in on the form) and what was actually *served* (the real
+   * Gadgets Process Request pulled — see ProcessRequestModal's own
+   * applyProcessing(), the only writer of `fulfilledGadgetIds`) can
+   * differ once quantities, substitutions, or a hand Finish (no assets
+   * ever selected) enter the picture, so this shows both side by side
+   * instead of assuming the pill's count tells the whole story.
+   * gadgetStore is the same one already wired up for the Gadget Type
+   * "N available" suggestion hint — reused here to resolve each
+   * fulfilled id back into a real asset's Category/Serial/Asset Tag/
+   * User/Merchant, exactly as Manage would show it, rather than showing
+   * bare ids. */
+  _openFulfillmentLog(id) {
+    const requisition = this.store.get(id);
+    if (!requisition) return;
+
+    const requestedRows = requisition.items.length
+      ? requisition.items.map((i) => `
+          <tr><td>${esc(i.category)}</td><td>${esc(String(i.qty))}</td></tr>
+        `).join('')
+      : `<tr><td colspan="2" class="hint">No items were listed on this request.</td></tr>`;
+
+    const fulfilledIds = requisition.fulfilledGadgetIds || [];
+    // Ids that don't resolve are assets deleted from Manage since being
+    // issued — still worth surfacing as a count rather than silently
+    // dropping them, so the served total always adds up to what
+    // `fulfilledGadgetIds.length` (and the history pill) promised.
+    const served = fulfilledIds.map((gid) => this.gadgetStore?.get(gid)).filter(Boolean);
+    const missingCount = fulfilledIds.length - served.length;
+
+    let servedBody;
+    if (requisition.status !== 'finished') {
+      servedBody = '<p class="hint">This requisition hasn\'t been finished yet — nothing has been issued against it.</p>';
+    } else if (served.length === 0) {
+      servedBody = '<p class="hint">Marked finished, but no specific assets are on record — it was likely finished by hand rather than through Process Request.</p>';
+    } else {
+      servedBody = `
+        <table class="requisition-log-table">
+          <thead>
+            <tr><th>Category</th><th>Serial Number</th><th>Warehouse Asset Tag</th><th>User</th><th>Merchant</th></tr>
+          </thead>
+          <tbody>
+            ${served.map((g) => `
+              <tr>
+                <td>${esc(g.category || 'Uncategorized')}</td>
+                <td>${esc(g.serialNumber || '—')}</td>
+                <td>${esc(g.warehouseAssetTag || '—')}</td>
+                <td>${esc(g.user || '—')}</td>
+                <td>${esc(g.merchant || '—')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        ${missingCount > 0 ? `<p class="hint">${missingCount} issued asset${missingCount === 1 ? '' : 's'} no longer exist${missingCount === 1 ? 's' : ''} in Manage — likely deleted since it was issued.</p>` : ''}
+      `;
+    }
+
+    const body = el(`
+      <div class="requisition-log-modal">
+        <div class="requisition-log-section">
+          <h4>Requested</h4>
+          <table class="requisition-log-table">
+            <thead><tr><th>Gadget Type</th><th>Qty</th></tr></thead>
+            <tbody>${requestedRows}</tbody>
+          </table>
+        </div>
+        <div class="requisition-log-section">
+          <h4>Actually Served</h4>
+          ${servedBody}
+        </div>
+      </div>
+    `);
+
+    new Modal({
+      title: `Requisition Log — ${requisition.requesterName || 'Unnamed requester'}`,
+      body,
+      size: 'lg',
+      footer: [{ label: 'Close', variant: 'btn-outline', onClick: (m) => m.close() }]
+    }).open();
   }
 
   /** Finish marks a requisition fulfilled (shown with a "Finished" pill

@@ -82,6 +82,20 @@
    technique as .printing-manifest in css/modal.css. */
 .requisition-print-area{ display: none; }
 
+/* "View log" modal (RequisitionController._openFulfillmentLog) — what
+   was requested (Gadget Type × Qty) next to what was actually served
+   (the real Gadgets Process Request pulled, resolved from
+   fulfilledGadgetIds). Two small read-only tables rather than the
+   editable manifest-detail-table styling, since nothing here is
+   editable. */
+.requisition-log-modal{ display: flex; flex-direction: column; gap: 20px; }
+.requisition-log-section h4{ font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-soft); margin: 0 0 8px; }
+.requisition-log-table{ width: 100%; border-collapse: collapse; }
+.requisition-log-table th, .requisition-log-table td{ border: 1px solid var(--border); padding: 7px 10px; font-size: 12.5px; text-align: left; }
+.requisition-log-table th{ background: var(--surface-sunk); font-weight: 600; color: var(--ink-soft); }
+.requisition-log-table td{ color: var(--ink); }
+.requisition-log-section .hint{ margin-top: 8px; }
+
 @media print {
   body.printing-requisition > *:not(.requisition-print-area){ visibility: hidden; }
   body.printing-requisition .requisition-print-area{

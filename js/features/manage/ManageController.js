@@ -485,14 +485,25 @@ export class ManageController {
       canActOnTransfer: (gadget) => this._canActOnPendingTransfer(gadget)
     });
     this.view.renderSortHeaders(this.state.sortBy, this.state.sortDir);
+    // allPageSelected/allFilteredSelected drive the footer's "Select all
+    // N filtered" hint (see ManageView.renderFooter) — shown only once
+    // every row on THIS page is checked but the filtered set is bigger
+    // than one page, so there's actually more to select; recomputed
+    // fresh every render rather than tracked as separate state, so it
+    // never needs to be manually kept in sync with selecting/deselecting
+    // individual rows, changing the filter, or changing page size.
+    const allPageSelected = pageGadgets.length > 0 && pageGadgets.every((g) => this.selected.has(g.id));
+    const allFilteredSelected = totalItems > 0 && filtered.every((g) => this.selected.has(g.id));
     this.view.renderFooter(
-      { totalItems, selectedCount: this.selected.size, page: this.state.page, pageSize: this.state.pageSize, totalPages },
+      { totalItems, selectedCount: this.selected.size, page: this.state.page, pageSize: this.state.pageSize, totalPages, allPageSelected, allFilteredSelected },
       {
         onPrevPage: () => this._goToPage(this.state.page - 1),
         onNextPage: () => this._goToPage(this.state.page + 1),
         onPageClick: (page) => this._goToPage(page),
         onPageSizeChange: (size) => { this.state.pageSize = size; this.state.page = 1; this.render(); },
-        onGotoPage: (page) => this._goToPage(page)
+        onGotoPage: (page) => this._goToPage(page),
+        onSelectAllFiltered: () => this._selectAllFiltered(),
+        onClearSelection: () => this._clearSelection()
       }
     );
     this._updateSelectionActions();
@@ -603,6 +614,22 @@ export class ManageController {
     }
 
     this._updatePendingTransferBulkButtons(hasSelection);
+
+    // "Delete selected" — same gate as the per-row Delete action
+    // (manage.delete); a group allowed to delete one asset at a time is
+    // allowed to delete many at once, so this reuses that permission
+    // rather than adding a separate delete-selected node just for the
+    // bulk path, the way Inventory Assets' own clear-all/delete-selected
+    // pair does. Exists specifically so a leftover batch of assets no
+    // longer represented in Inventory Assets — see _catalogIssuesById —
+    // doesn't have to be removed one row, one confirm dialog, at a time.
+    if (this.refs.deleteSelectedBtn) {
+      const canDeleteSelected = can('manage.delete');
+      this.refs.deleteSelectedBtn.style.display = canDeleteSelected ? '' : 'none';
+      this.refs.deleteSelectedBtn.disabled = !hasSelection;
+      this.refs.deleteSelectedBtn.title = hasSelection ? '' : 'Select one or more assets first.';
+      if (this.refs.deleteSelectedSep) this.refs.deleteSelectedSep.style.display = canDeleteSelected ? '' : 'none';
+    }
   }
 
   /**
@@ -726,6 +753,7 @@ export class ManageController {
     this.refs.transferItemBtn.addEventListener('click', () => this._openAdjustPositionMenu());
     this.refs.requestItemBtn?.addEventListener('click', () => this.openProcessRequestModal());
     this.refs.transfersMenuBtn?.addEventListener('click', () => this._openTransfersMenu());
+    this.refs.deleteSelectedBtn?.addEventListener('click', () => this._deleteSelected());
     this.refs.refreshBtn.addEventListener('click', () => this.render());
   }
 
@@ -1292,6 +1320,59 @@ export class ManageController {
     this.store.delete(id);
     this.selected.delete(id);
     Toast.show(`Removed asset for ${gadget.user || 'Unassigned'}.`);
+  }
+
+  /** Bulk sibling of deleteGadget() above — same confirm-then-delete
+   * shape as Inventory Assets' own _deleteSelected(), just without that
+   * one's cascade (a Manage row deleted here has no matching Inventory
+   * Assets record to clean up — the FK only ever runs the other way; see
+   * core/InventoryGadgetSync.js's own header comment). Exists so a batch
+   * of assets — most commonly ones _catalogIssuesById() is already
+   * flagging with ⚠ because their Inventory Assets record was cleared or
+   * removed out from under them — can be cleared in one confirm instead
+   * of one row/one dialog at a time. Deliberately doesn't auto-select or
+   * auto-delete "everything with a catalog issue" on its own: a catalog
+   * mismatch can also mean a stale field on an asset that's still very
+   * much in active use, so it stays an explicit, reviewable selection
+   * (helped along by _selectAllFiltered() below) rather than a one-click
+   * purge of anything flagged. */
+  async _deleteSelected() {
+    if (!can('manage.delete')) return;
+    const count = this.selected.size;
+    if (count === 0) return;
+    const ok = await confirmDialog({
+      title: 'Delete selected assets',
+      message: `Delete ${count} selected ${count === 1 ? 'asset' : 'assets'} from Manage? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true
+    });
+    if (!ok) return;
+    const ids = [...this.selected];
+    ids.forEach((id) => this.store.delete(id));
+    this.selected.clear();
+    Toast.show(`Deleted ${count} ${count === 1 ? 'asset' : 'assets'}.`);
+  }
+
+  /** "Select all N filtered assets" — the footer link shown once every
+   * row on the current page is checked and more still match the active
+   * filters (see render()'s own allPageSelected/allFilteredSelected).
+   * The page-level select-all checkbox only ever reaches rows actually
+   * rendered on screen (see _toggleSelectAll), so without this a search
+   * matching hundreds of rows across several pages would mean paging
+   * through each one to build up a selection before Delete selected (or
+   * any other bulk action) could touch all of them at once. */
+  _selectAllFiltered() {
+    this._filteredSortedGadgets().forEach((g) => this.selected.add(g.id));
+    this.render();
+  }
+
+  /** Clears the current selection outright — the footer's other new
+   * link, next to "Select all N filtered", for backing out of a large
+   * selection without unchecking rows one by one or reloading the tab. */
+  _clearSelection() {
+    if (this.selected.size === 0) return;
+    this.selected.clear();
+    this.render();
   }
 
   /** Plain export when nothing's selected (only one sensible option); a dropdown to choose between all/selected once something is. */

@@ -63,17 +63,37 @@ export class SupabaseStore extends EventBus {
   }
 
   async _refresh() {
-    const { data, error } = await supabase
-      .from(this.table)
-      .select('*')
-      .order(this.orderBy, { ascending: this.ascending });
+    // PostgREST (the API layer Supabase sits on) caps every response at a
+    // default of 1000 rows (the project's `db-max-rows` setting), no matter
+    // how many rows actually exist. A plain `.select('*')` therefore silently
+    // truncates any table over 1000 rows — which is why the Manage and
+    // Inventory Assets tabs were both stuck showing exactly 1,000 records
+    // even though gadgets/inventory_assets hold more. Page through with
+    // `.range()` in PAGE_SIZE-sized chunks and concatenate until a page
+    // comes back short (or empty), which signals we've reached the end.
+    const PAGE_SIZE = 1000;
+    let allRows = [];
+    let from = 0;
 
-    if (error) {
-      console.error(`SupabaseStore(${this.table}): failed to load`, error);
-      this.emit('error', { type: 'load', error });
-      return;
+    while (true) {
+      const { data, error } = await supabase
+        .from(this.table)
+        .select('*')
+        .order(this.orderBy, { ascending: this.ascending })
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) {
+        console.error(`SupabaseStore(${this.table}): failed to load`, error);
+        this.emit('error', { type: 'load', error });
+        return;
+      }
+
+      allRows = allRows.concat(data || []);
+      if (!data || data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
     }
-    this.records = (data || []).map(this.factory);
+
+    this.records = allRows.map(this.factory);
     this.emit('change', { type: 'load' });
   }
 
@@ -83,7 +103,24 @@ export class SupabaseStore extends EventBus {
       .on('postgres_changes', { event: '*', schema: 'public', table: this.table }, () => {
         // Simplicity over cleverness: re-fetch the whole table on any remote
         // change rather than patching the cache row-by-row from the payload.
-        this._refresh();
+        //
+        // Debounced rather than called directly: _refresh() now pages
+        // through the table in 1000-row chunks (see its own comment), so on
+        // any table over 1000 rows it costs multiple sequential round trips
+        // instead of one. A bulk action — "Delete selected" on hundreds of
+        // rows, a large CSV import, the cascading gadget deletes that follow
+        // an Inventory Assets bulk delete — fires one change event PER ROW,
+        // and this client is subscribed to its own table's realtime feed, so
+        // every one of those echoes back and used to trigger its own
+        // separate full multi-page _refresh(). Hundreds of row events times
+        // multiple round trips each turns a single bulk action into a huge
+        // pile of overlapping requests, which is what was actually making
+        // the app feel slow — not the bulk action itself. Waiting for a
+        // short quiet period before refreshing collapses a whole burst of
+        // events into exactly one refresh, same end state (cache matches
+        // the table) for a fraction of the network traffic.
+        clearTimeout(this._refreshDebounceTimer);
+        this._refreshDebounceTimer = setTimeout(() => this._refresh(), 300);
       })
       .subscribe();
   }
@@ -92,6 +129,7 @@ export class SupabaseStore extends EventBus {
   unsubscribe() {
     if (this._channel) supabase.removeChannel(this._channel);
     this._channel = null;
+    clearTimeout(this._refreshDebounceTimer);
   }
 
   list() {

@@ -41,6 +41,15 @@ import { enhanceSelect } from './SelectField.js';
  * applyMerchantTransfer() writes back to each asset once the transfer is
  * confirmed. Without those two stores the field behaves exactly as
  * before: a plain free-text merchant name.
+ *
+ * "+ Add row" and the warehouse picker/placement preview live in the
+ * modal's sticky footer (passed to Modal as `footerExtra`), not below the
+ * detail table — a manifest can run to hundreds of rows (see the
+ * screenshot that prompted this: 1,072 checked assets), and burying the
+ * only way to add a row or resolve an ambiguous "Transfer to" at the
+ * bottom of that scroll meant the user had to scroll all the way down
+ * just to reach them. The footer is always in view regardless of scroll
+ * position or row count.
  */
 
 /** Column order/labels for the manifest detail table, matching the printed transmittal layout. */
@@ -186,17 +195,22 @@ export function openManifestModal({ gadgets = [], store = null, locationStore = 
             <tbody data-role="manifest-body"></tbody>
         </table>
         </div>
+    </div>
+  `);
 
-        <div class="manifest-below-table-row">
-          <button tabindex="-1" type="button" class="btn btn-outline btn-sm no-print" data-action="add-manifest-row">+ Add row</button>
-          <div class="manifest-below-table-right no-print">
-            <div class="manifest-warehouse-pick no-print" data-role="manifest-warehouse-pick" hidden>
-              <label for="manifestWarehousePick">Select warehouse</label>
-              <select id="manifestWarehousePick" data-role="manifest-warehouse-select"></select>
-            </div>
-            <div class="placement-preview placement-preview-block no-print" data-role="manifest-placement-preview"></div>
-          </div>
+  // Rendered separately from `body` and handed to Modal as `footerExtra`
+  // (see Modal.js) so it lands in the sticky footer instead of scrolling
+  // away with the (potentially very long) row table above.
+  const footerExtra = el(`
+    <div class="manifest-below-table-row">
+      <button tabindex="-1" type="button" class="btn btn-outline btn-sm no-print" data-action="add-manifest-row">+ Add row</button>
+      <div class="manifest-below-table-right no-print">
+        <div class="manifest-warehouse-pick no-print" data-role="manifest-warehouse-pick" hidden>
+          <label for="manifestWarehousePick">Select warehouse</label>
+          <select id="manifestWarehousePick" data-role="manifest-warehouse-select"></select>
         </div>
+        <div class="placement-preview placement-preview-block no-print" data-role="manifest-placement-preview"></div>
+      </div>
     </div>
   `);
 
@@ -217,7 +231,7 @@ export function openManifestModal({ gadgets = [], store = null, locationStore = 
   // the location names actually created under Warehouse Information, and
   // show what each one resolves to before the transfer is even confirmed.
   const merchantMetaInput = body.querySelector('[data-meta="merchant"]');
-  const merchantPreviewEl = body.querySelector('[data-role="manifest-placement-preview"]');
+  const merchantPreviewEl = footerExtra.querySelector('[data-role="manifest-placement-preview"]');
   if (locationStore) {
     const locationCodes = [...new Set(locationStore.list().filter((l) => l.enabled).map((l) => l.locationCode).filter(Boolean))].sort();
     body.querySelector('#manifestMerchantOptions').innerHTML =
@@ -232,8 +246,8 @@ export function openManifestModal({ gadgets = [], store = null, locationStore = 
   // for every ordinary (zero- or one-match) "Transfer to" value, exactly as
   // before this existed.
   let selectedWarehouseId = '';
-  const warehousePickWrap = body.querySelector('[data-role="manifest-warehouse-pick"]');
-  const warehousePickSelect = body.querySelector('[data-role="manifest-warehouse-select"]');
+  const warehousePickWrap = footerExtra.querySelector('[data-role="manifest-warehouse-pick"]');
+  const warehousePickSelect = footerExtra.querySelector('[data-role="manifest-warehouse-select"]');
   // Same styled trigger + popover as every other <select> in the app
   // (e.g. Manage's "Position Type" filter) instead of a bare native
   // control — wraps the real <select> in place, so .value/'change' below
@@ -370,7 +384,7 @@ export function openManifestModal({ gadgets = [], store = null, locationStore = 
 
   renderRows(initialRows);
 
-  body.querySelector('[data-action="add-manifest-row"]').addEventListener('click', () => {
+  footerExtra.querySelector('[data-action="add-manifest-row"]').addEventListener('click', () => {
     tbody.insertAdjacentHTML('beforeend', rowHTML(blankRow()));
     bindRowEvents();
     recomputeSummary();
@@ -523,6 +537,7 @@ export function openManifestModal({ gadgets = [], store = null, locationStore = 
     title: 'Manifest / Transmittal',
     body,
     size: 'lg',
+    footerExtra,
     footer: [
       { label: 'Close', variant: 'btn-outline', onClick: (m) => m.close() },
       {

@@ -25,7 +25,12 @@
 .modal-close:hover{ color: var(--ink); }
 
 .modal-body{ padding: 18px 20px; overflow-y: auto; }
-.modal-foot{ padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+/* Column, not row: an optional footerExtra row (see Modal.js) stacks above
+   the button row so it stays inside the sticky footer instead of the
+   scrollable body. With no footerExtra, .modal-foot-buttons is the only
+   child and this behaves exactly like the old single-row footer. */
+.modal-foot{ padding: 14px 20px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+.modal-foot-buttons{ display: flex; justify-content: flex-end; gap: 8px; }
 
 .modal-body.modal-body--message{ font-size: 13.5px; color: var(--ink-soft); line-height: 1.5; }
 
@@ -44,7 +49,7 @@
 .placement-preview-unmatched{ color: var(--warn); }
 
 /* ManifestModal only: the preview sits inline with the "+ Add row" button
-   below the detail table (button flush left, preview flush right — see
+   in the modal footer (button flush left, preview flush right — see
    .manifest-below-table-row), so it needs its own box instead of the bare
    inline text the shared .placement-preview rule gives ManageForm's
    Merchant field. */
@@ -59,12 +64,16 @@
 }
 .placement-preview-block:empty{ display: none; }
 
+/* Lives inside the modal footer now (passed as Modal's footerExtra, see
+   ManifestModal.js) rather than below the detail table, so it's reachable
+   without scrolling a long manifest — no more margin-top since the
+   footer's own column gap (.modal-foot) handles spacing above it. */
 .manifest-below-table-row{
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-top: 10px;
+  width: 100%;
 }
 
 /* Groups the warehouse picker with the placement preview so the row above

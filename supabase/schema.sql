@@ -200,7 +200,10 @@ create table if not exists public.requisitions (
   -- Gadget ids actually issued by "Process request" (see
   -- RequisitionController._processRequest) — see
   -- models/Requisition.js's own fulfilledGadgetIds doc.
-  "fulfilledGadgetIds" jsonb default '[]'::jsonb
+  "fulfilledGadgetIds" jsonb default '[]'::jsonb,
+  -- One snapshot per row actually issued (matched Gadget or hand-typed)
+  -- — see models/Requisition.js's own fulfilledItems doc.
+  "fulfilledItems" jsonb default '[]'::jsonb
 );
 
 -- ----------------------------------------------------------------------------
@@ -247,6 +250,14 @@ alter table public.requisitions add column if not exists status text default 'pe
 -- recognize and rejected the whole row — see
 -- models/Requisition.js's own fulfilledGadgetIds doc.
 alter table public.requisitions add column if not exists "fulfilledGadgetIds" jsonb default '[]'::jsonb;
+
+-- Process Request now records a full snapshot of every row it issues —
+-- including hand-typed rows with no matching Gadget id, which
+-- "fulfilledGadgetIds" alone can't represent — so "Actually Served"
+-- (RequisitionController._openFulfillmentLog) can show the whole
+-- document instead of just whichever rows matched a real asset. See
+-- models/Requisition.js's own fulfilledItems doc.
+alter table public.requisitions add column if not exists "fulfilledItems" jsonb default '[]'::jsonb;
 
 -- ----------------------------------------------------------------------------
 -- user_accounts  (Settings → User management → User)

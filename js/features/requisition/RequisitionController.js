@@ -206,17 +206,30 @@ export class RequisitionController {
   /** "View log" — the counterpart to the "Finished · N issued" pill
    * shown in Recent Requisitions once a request is Finished (see
    * RequisitionView.renderHistory). What was *requested* (Gadget Type ×
-   * Qty, filled in on the form) and what was actually *served* (the real
-   * Gadgets Process Request pulled — see ProcessRequestModal's own
-   * applyProcessing(), the only writer of `fulfilledGadgetIds`) can
-   * differ once quantities, substitutions, or a hand Finish (no assets
-   * ever selected) enter the picture, so this shows both side by side
-   * instead of assuming the pill's count tells the whole story.
+   * Qty, filled in on the form) and what was actually *served* (every row
+   * Process Request issued — see ProcessRequestModal's own
+   * applyProcessing(), the only writer of `fulfilledItems`/
+   * `fulfilledGadgetIds`) can differ once quantities, substitutions, or a
+   * hand Finish (no assets ever selected) enter the picture, so this
+   * shows both side by side instead of assuming the pill's count tells
+   * the whole story.
+   *
+   * Each served row prefers the *live* Gadget (resolved via its
+   * `gadgetId`, exactly as Manage would show it right now — e.g. after a
+   * pending transfer since got confirmed) and falls back to the frozen
+   * snapshot `fulfilledItems` recorded at issue time otherwise — which is
+   * the *only* data available for a hand-typed row (no backing Gadget to
+   * begin with, e.g. a power cable that isn't tracked as its own
+   * serialized asset) and for a real asset since deleted from Manage.
    * gadgetStore is the same one already wired up for the Gadget Type
-   * "N available" suggestion hint — reused here to resolve each
-   * fulfilled id back into a real asset's Category/Serial/Asset Tag/
-   * User/Merchant, exactly as Manage would show it, rather than showing
-   * bare ids. */
+   * "N available" suggestion hint, reused here for that live lookup.
+   *
+   * `fulfilledItems` didn't always exist — a requisition finished before
+   * this field was added only recorded `fulfilledGadgetIds`. For those,
+   * this falls back further to the old id-only behavior: resolve each id
+   * against gadgetStore and skip (just counting) whatever no longer
+   * resolves, since there's no snapshot to fall back to for those.
+   */
   _openFulfillmentLog(id) {
     const requisition = this.store.get(id);
     if (!requisition) return;
@@ -227,18 +240,42 @@ export class RequisitionController {
         `).join('')
       : `<tr><td colspan="2" class="hint">No items were listed on this request.</td></tr>`;
 
-    const fulfilledIds = requisition.fulfilledGadgetIds || [];
-    // Ids that don't resolve are assets deleted from Manage since being
-    // issued — still worth surfacing as a count rather than silently
-    // dropping them, so the served total always adds up to what
-    // `fulfilledGadgetIds.length` (and the history pill) promised.
-    const served = fulfilledIds.map((gid) => this.gadgetStore?.get(gid)).filter(Boolean);
-    const missingCount = fulfilledIds.length - served.length;
+    const hasSnapshots = (requisition.fulfilledItems || []).length > 0;
+    // Legacy fallback: a requisition finished before fulfilledItems
+    // existed only recorded gadget ids — treat each as a snapshot-less
+    // entry so the loop below still has something to iterate, just with
+    // nothing to fall back on if the live asset is gone.
+    const fulfilledItems = hasSnapshots
+      ? requisition.fulfilledItems
+      : (requisition.fulfilledGadgetIds || []).map((gid) => ({ gadgetId: gid }));
+
+    let missingCount = 0;
+    const servedRows = [];
+    fulfilledItems.forEach((item) => {
+      const live = item.gadgetId ? this.gadgetStore?.get(item.gadgetId) : null;
+      const hasSnapshot = Boolean(item.category || item.serialNumber || item.user || item.merchant);
+      if (item.gadgetId && !live && !hasSnapshot) {
+        // Legacy id-only entry whose asset is gone — nothing to show,
+        // same as the old behavior: count it, don't render a blank row.
+        missingCount++;
+        return;
+      }
+      const source = live || item;
+      servedRows.push(`
+        <tr>
+          <td>${esc(source.category || 'Uncategorized')}</td>
+          <td>${esc(source.serialNumber || '—')}</td>
+          <td>${esc(source.warehouseAssetTag || '—')}</td>
+          <td>${esc(source.user || '—')}</td>
+          <td>${esc(source.merchant || '—')}</td>
+        </tr>
+      `);
+    });
 
     let servedBody;
     if (requisition.status !== 'finished') {
       servedBody = '<p class="hint">This requisition hasn\'t been finished yet — nothing has been issued against it.</p>';
-    } else if (served.length === 0) {
+    } else if (servedRows.length === 0) {
       servedBody = '<p class="hint">Marked finished, but no specific assets are on record — it was likely finished by hand rather than through Process Request.</p>';
     } else {
       servedBody = `
@@ -247,15 +284,7 @@ export class RequisitionController {
             <tr><th>Category</th><th>Serial Number</th><th>Warehouse Asset Tag</th><th>User</th><th>Merchant</th></tr>
           </thead>
           <tbody>
-            ${served.map((g) => `
-              <tr>
-                <td>${esc(g.category || 'Uncategorized')}</td>
-                <td>${esc(g.serialNumber || '—')}</td>
-                <td>${esc(g.warehouseAssetTag || '—')}</td>
-                <td>${esc(g.user || '—')}</td>
-                <td>${esc(g.merchant || '—')}</td>
-              </tr>
-            `).join('')}
+            ${servedRows.join('')}
           </tbody>
         </table>
         ${missingCount > 0 ? `<p class="hint">${missingCount} issued asset${missingCount === 1 ? '' : 's'} no longer exist${missingCount === 1 ? 's' : ''} in Manage — likely deleted since it was issued.</p>` : ''}

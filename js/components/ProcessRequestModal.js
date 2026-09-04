@@ -52,6 +52,11 @@ import { enhanceSelect } from './SelectField.js';
  * too. It's the same idea as _computeAvailableByCategory's own available-
  * count hint, just turned into something you can actually pick from
  * rather than a number to go find manually in the Manage grid.
+ *
+ * "+ Add row" / "Select Asset" and the warehouse picker/placement preview
+ * live in the modal's sticky footer (passed to Modal as `footerExtra`,
+ * same relocation as ManifestModal.js) rather than below the detail
+ * table, so they stay reachable without scrolling a long request.
  */
 
 /** Column order/labels for the detail table — identical set to
@@ -183,19 +188,24 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
       <tbody data-role="pr-body"></tbody>
       </table>
       </div>
+    </div>
+  `);
 
-      <div class="manifest-below-table-row">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <button tabindex="-1" type="button" class="btn btn-outline btn-sm no-print" data-action="add-pr-row">+ Add row</button>
-          <button tabindex="-1" type="button" class="btn btn-outline btn-sm no-print" data-action="select-asset">Select Asset</button>
+  // Rendered separately from `body` and handed to Modal as `footerExtra`
+  // (see Modal.js / ManifestModal.js's own copy of this) so it lands in
+  // the sticky footer instead of scrolling away with the row table above.
+  const footerExtra = el(`
+    <div class="manifest-below-table-row">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <button tabindex="-1" type="button" class="btn btn-outline btn-sm no-print" data-action="add-pr-row">+ Add row</button>
+        <button tabindex="-1" type="button" class="btn btn-outline btn-sm no-print" data-action="select-asset">Select Asset</button>
+      </div>
+      <div class="manifest-below-table-right no-print">
+        <div class="manifest-warehouse-pick no-print" data-role="pr-warehouse-pick" hidden>
+          <label for="processRequestWarehousePick">Select warehouse</label>
+          <select id="processRequestWarehousePick" data-role="pr-warehouse-select"></select>
         </div>
-        <div class="manifest-below-table-right no-print">
-          <div class="manifest-warehouse-pick no-print" data-role="pr-warehouse-pick" hidden>
-            <label for="processRequestWarehousePick">Select warehouse</label>
-            <select id="processRequestWarehousePick" data-role="pr-warehouse-select"></select>
-          </div>
-          <div class="placement-preview placement-preview-block no-print" data-role="pr-placement-preview"></div>
-        </div>
+        <div class="placement-preview placement-preview-block no-print" data-role="pr-placement-preview"></div>
       </div>
     </div>
   `);
@@ -224,7 +234,7 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
   // location names actually created under Warehouse Information, and
   // show what each one resolves to before anything is even printed.
   const transferToInput = body.querySelector('[data-meta="transferTo"]');
-  const placementPreviewEl = body.querySelector('[data-role="pr-placement-preview"]');
+  const placementPreviewEl = footerExtra.querySelector('[data-role="pr-placement-preview"]');
   if (locationStore) {
     const locationCodes = [...new Set(locationStore.list().filter((l) => l.enabled).map((l) => l.locationCode).filter(Boolean))].sort();
     body.querySelector('#processRequestMerchantOptions').innerHTML =
@@ -236,8 +246,8 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
   // When "Transfer to" matches more than one site's location, this picker
   // appears to ask which one is meant; stays hidden otherwise.
   let selectedWarehouseId = '';
-  const warehousePickWrap = body.querySelector('[data-role="pr-warehouse-pick"]');
-  const warehousePickSelect = body.querySelector('[data-role="pr-warehouse-select"]');
+  const warehousePickWrap = footerExtra.querySelector('[data-role="pr-warehouse-pick"]');
+  const warehousePickSelect = footerExtra.querySelector('[data-role="pr-warehouse-select"]');
   const warehousePickField = enhanceSelect(warehousePickSelect);
 
   function showWarehousePick(candidates) {
@@ -362,7 +372,7 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
 
   renderRows(initialRows);
 
-  body.querySelector('[data-action="add-pr-row"]').addEventListener('click', () => {
+  footerExtra.querySelector('[data-action="add-pr-row"]').addEventListener('click', () => {
     tbody.insertAdjacentHTML('beforeend', rowHTML(blankRow()));
     bindRowEvents();
     recomputeSummary();
@@ -375,7 +385,7 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
   // instead of typing (or hand-copying) every field — same underlying
   // Gadget records the Manage grid itself lists, filtered down to just
   // what this request could plausibly be fulfilled with.
-  const selectAssetBtn = body.querySelector('[data-action="select-asset"]');
+  const selectAssetBtn = footerExtra.querySelector('[data-action="select-asset"]');
 
   /** Category → requested qty for whichever Requisition is currently
    * picked, or null if none is picked yet — the picker has nothing to
@@ -540,10 +550,16 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
   }
 
   /**
-   * Issues every row that maps back to a real Gadget (hand-added blank
-   * rows have no matching id and are skipped, same as ManifestModal's own
-   * applyMerchantTransfer). `user` is always written immediately — the
-   * requester already has the unit in hand, nothing to confirm there.
+   * Issues every row on the document — both rows that map back to a real
+   * Gadget and hand-typed ones that don't (e.g. a consumable like a power
+   * cable that isn't tracked as its own serialized asset in Manage). Only
+   * a matched row's underlying Gadget record actually gets mutated
+   * (there's nothing in Manage to write for a hand-typed one), but *every*
+   * row — matched or not — is recorded in `fulfilledItems` so "Actually
+   * Served" (RequisitionController._openFulfillmentLog) reflects the
+   * whole document, not just the subset that happened to have a matching
+   * asset id. `user` is always written immediately for a matched row —
+   * the requester already has the unit in hand, nothing to confirm there.
    *
    * The merchant/placement side follows Manifest's own pending-vs-
    * immediate split exactly: a "Transfer to" that resolves to a real
@@ -551,10 +567,12 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
    * warehouse/owner stay as they were until someone bound to that
    * destination warehouse confirms receipt from the Manage grid); an
    * unmatched value — unreachable through Issue / Print's own validation
-   * below, same as Manifest — would apply the merchant immediately.
+   * below, same as Manifest — would apply the merchant immediately. A
+   * hand-typed row has no Gadget to place, so this only ever applies to
+   * matched rows.
    *
    * Once issued, the paired Requisition is marked finished with exactly
-   * the ids issued here — that happens now, at issuance, not deferred to
+   * the rows issued here — that happens now, at issuance, not deferred to
    * whenever the pending transfer eventually gets confirmed: the request
    * is fulfilled the moment the unit leaves stock for the requester,
    * regardless of how long its warehouse placement takes to settle.
@@ -579,75 +597,97 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
     const requestedBy = getOperatorName();
 
     const issuedIds = [];
+    const fulfilledItems = [];
     let pendingCount = 0;
 
     qsa('tr[data-row-id]', tbody).forEach((tr) => {
       const rowId = tr.getAttribute('data-row-id');
       const gadget = gadgetStore.get(rowId);
-      if (!gadget) return;
 
-      // 'None' rather than '' so the log message this feeds into (below)
-      // reads as "merchant 'None' → 'X'" instead of "merchant '' → 'X'"
-      // — same fallback ManifestModal.js's own applyMerchantTransfer
-      // already uses, for the same reason: an empty pair of quotes in a
-      // permanent history entry reads as a rendering glitch, not "this
-      // gadget didn't have a merchant yet."
-      const previousMerchant = gadget.merchant || 'None';
+      // Snapshot every column straight from the row's own inputs first —
+      // this is the only source of truth for a hand-typed row (no
+      // matching id below), and it's what "Actually Served" falls back
+      // to for a matched row too, if that asset is ever deleted later.
+      const snapshot = {};
+      COLUMNS.forEach((c) => {
+        if (c.key === 'recentResponsible') return; // derived/display-only, not worth freezing
+        const input = tr.querySelector(`input[data-field="${c.key}"]`);
+        snapshot[c.key] = input ? input.value.trim() : '';
+      });
 
-      if (placement.matched) {
-        gadget.addLogEntry(
-          `Issued via requisition to ${issuedTo}. Transfer requested: merchant '${previousMerchant}' → '${transferTo}'.${placementNote} Awaiting confirmation from anyone with access to ${placement.owner}.`,
-          'transfer',
-          { from: previousMerchant, to: transferTo },
-          requestedBy
-        );
-        gadgetStore.update(gadget.id, {
-          user: issuedTo,
-          pendingTransfer: {
-            toMerchant: transferTo,
-            toPositionType: placement.positionType,
-            toWarehouse: placement.warehouse,
-            toOwner: placement.owner,
-            toWarehouseId: destinationWarehouseId(placement),
-            requestedAt,
+      if (gadget) {
+        // 'None' rather than '' so the log message this feeds into
+        // (below) reads as "merchant 'None' → 'X'" instead of "merchant
+        // '' → 'X'" — same fallback ManifestModal.js's own
+        // applyMerchantTransfer already uses, for the same reason: an
+        // empty pair of quotes in a permanent history entry reads as a
+        // rendering glitch, not "this gadget didn't have a merchant yet."
+        const previousMerchant = gadget.merchant || 'None';
+
+        if (placement.matched) {
+          gadget.addLogEntry(
+            `Issued via requisition to ${issuedTo}. Transfer requested: merchant '${previousMerchant}' → '${transferTo}'.${placementNote} Awaiting confirmation from anyone with access to ${placement.owner}.`,
+            'transfer',
+            { from: previousMerchant, to: transferTo },
             requestedBy
-          }
-        });
-        pendingCount++;
-        // Same as ManifestModal: the row keeps showing the *current*
-        // merchant — the transfer hasn't actually happened yet.
-      } else {
-        gadget.addLogEntry(
-          `Issued via requisition to ${issuedTo}. Merchant transferred from '${previousMerchant}' to '${transferTo}'.${placementNote}`,
-          'transfer',
-          { from: previousMerchant, to: transferTo },
-          requestedBy
-        );
-        gadgetStore.update(gadget.id, { user: issuedTo, merchant: transferTo, pendingTransfer: null, ...placementPatch });
+          );
+          gadgetStore.update(gadget.id, {
+            user: issuedTo,
+            pendingTransfer: {
+              toMerchant: transferTo,
+              toPositionType: placement.positionType,
+              toWarehouse: placement.warehouse,
+              toOwner: placement.owner,
+              toWarehouseId: destinationWarehouseId(placement),
+              requestedAt,
+              requestedBy
+            }
+          });
+          pendingCount++;
+          // Same as ManifestModal: the row keeps showing the *current*
+          // merchant — the transfer hasn't actually happened yet.
+        } else {
+          gadget.addLogEntry(
+            `Issued via requisition to ${issuedTo}. Merchant transferred from '${previousMerchant}' to '${transferTo}'.${placementNote}`,
+            'transfer',
+            { from: previousMerchant, to: transferTo },
+            requestedBy
+          );
+          gadgetStore.update(gadget.id, { user: issuedTo, merchant: transferTo, pendingTransfer: null, ...placementPatch });
 
-        const merchantInput = tr.querySelector('input[data-field="merchant"]');
-        if (merchantInput) merchantInput.value = transferTo;
+          snapshot.merchant = transferTo;
+          const merchantInput = tr.querySelector('input[data-field="merchant"]');
+          if (merchantInput) merchantInput.value = transferTo;
+        }
+
+        issuedIds.push(gadget.id);
       }
+      // A hand-typed row (no `gadget`) has nothing in Manage to mutate —
+      // there's no asset record to reassign a user/merchant onto — but
+      // it was still printed and handed over, so it still counts as
+      // issued below.
 
-      issuedIds.push(gadget.id);
+      snapshot.user = issuedTo;
       const userInput = tr.querySelector('input[data-field="user"]');
       if (userInput) userInput.value = issuedTo;
+
+      fulfilledItems.push({ gadgetId: gadget ? gadget.id : null, ...snapshot });
     });
 
-    if (issuedIds.length === 0) {
-      Toast.error('None of the rows above matched a real asset to issue.');
+    if (fulfilledItems.length === 0) {
+      Toast.error('Add at least one row before issuing.');
       return;
     }
 
     if (requisitionStore && requisitionId) {
-      requisitionStore.update(requisitionId, { status: 'finished', fulfilledGadgetIds: issuedIds });
+      requisitionStore.update(requisitionId, { status: 'finished', fulfilledGadgetIds: issuedIds, fulfilledItems });
     }
 
     if (pendingCount > 0) {
-      Toast.success(`Issued to ${issuedTo} — ${issuedIds.length} item${issuedIds.length === 1 ? '' : 's'}. Transfer to "${transferTo}" is awaiting confirmation from anyone with access to ${placement.owner}.`);
+      Toast.success(`Issued to ${issuedTo} — ${fulfilledItems.length} item${fulfilledItems.length === 1 ? '' : 's'}. Transfer to "${transferTo}" is awaiting confirmation from anyone with access to ${placement.owner}.`);
     } else {
       const suffix = placement.matched ? ` (${placement.positionType} · ${placement.warehouse} · ${placement.owner})` : '';
-      Toast.success(`Processed the request for ${issuedTo} — ${issuedIds.length} item${issuedIds.length === 1 ? '' : 's'} issued, transferred to "${transferTo}"${suffix}.`);
+      Toast.success(`Processed the request for ${issuedTo} — ${fulfilledItems.length} item${fulfilledItems.length === 1 ? '' : 's'} issued, transferred to "${transferTo}"${suffix}.`);
     }
   }
 
@@ -655,6 +695,7 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
     title: 'Process Request',
     body,
     size: 'lg',
+    footerExtra,
     footer: [
       { label: 'Close', variant: 'btn-outline', onClick: (m) => m.close() },
       {

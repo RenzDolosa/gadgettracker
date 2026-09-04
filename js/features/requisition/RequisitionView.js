@@ -51,7 +51,12 @@ export class RequisitionView {
     this.refs.historyListEl.innerHTML = requisitions.map((r) => {
       const itemsSummary = r.items.map((i) => `${esc(i.category)} × ${esc(String(i.qty))}`).join(', ') || 'No items';
       const finished = r.status === 'finished';
-      const issuedCount = r.fulfilledGadgetIds?.length || 0;
+      // Prefer fulfilledItems' count (every row Process Request issued,
+      // hand-typed ones included — see Requisition.js's own doc) over
+      // fulfilledGadgetIds, which only counts rows that matched a real
+      // Gadget. Falls back to the old id-only count for a requisition
+      // finished before fulfilledItems existed.
+      const issuedCount = r.fulfilledItems?.length || r.fulfilledGadgetIds?.length || 0;
       const finishedLabel = issuedCount > 0 ? `Finished · ${issuedCount} issued` : 'Finished';
       return `
         <div class="requisition-history-row${finished ? ' is-finished' : ''}" data-id="${esc(r.id)}">

@@ -132,6 +132,8 @@
             <button tabindex="-1" type="button" class="link-btn selection-gated" id="requestItemBtn" style="display:none;">Process Request</button>
             <span class="link-sep" id="requestItemSep" style="display:none;">|</span>
             <button tabindex="-1" type="button" class="link-btn selection-gated" id="transfersMenuBtn" style="display:none;">Transfers</button>
+            <span class="link-sep" id="deleteSelectedSep" style="display:none;">|</span>
+            <button tabindex="-1" type="button" class="link-btn danger selection-gated" id="deleteSelectedBtn" style="display:none;">Delete selected</button>
           </div>
           <div class="actionbar-right">
             <button tabindex="-1" type="button" class="icon-btn" id="refreshBtn" title="Refresh">
@@ -191,6 +193,8 @@
               <div class="grid-footer-left">
                 <span id="selectedCount">Checked 0</span>
                 <span id="resultCount">0 assets</span>
+                <button tabindex="-1" type="button" class="link-btn" id="selectAllFilteredBtn" style="display:none;"></button>
+                <button tabindex="-1" type="button" class="link-btn" id="clearSelectionBtn" style="display:none;">Clear selection</button>
               </div>
               <div class="grid-footer-right">
                 <select id="pageSizeSelect">

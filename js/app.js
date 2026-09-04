@@ -63,6 +63,8 @@ function collectRefs() {
     requestItemBtn: document.getElementById('requestItemBtn'),
     requestItemSep: document.getElementById('requestItemSep'),
     transfersMenuBtn: document.getElementById('transfersMenuBtn'),
+    deleteSelectedBtn: document.getElementById('deleteSelectedBtn'),
+    deleteSelectedSep: document.getElementById('deleteSelectedSep'),
     refreshBtn: document.getElementById('refreshBtn'),
 
     // Table
@@ -74,6 +76,8 @@ function collectRefs() {
     // Footer / pagination
     selectedCount: document.getElementById('selectedCount'),
     resultCount: document.getElementById('resultCount'),
+    selectAllFilteredBtn: document.getElementById('selectAllFilteredBtn'),
+    clearSelectionBtn: document.getElementById('clearSelectionBtn'),
     pageSizeSelect: document.getElementById('pageSizeSelect'),
     prevPageBtn: document.getElementById('prevPageBtn'),
     nextPageBtn: document.getElementById('nextPageBtn'),

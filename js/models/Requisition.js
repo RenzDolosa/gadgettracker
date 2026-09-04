@@ -36,8 +36,40 @@ export class Requisition {
     // ProcessRequestModal.js) — empty for a requisition marked finished
     // by hand instead, since nothing was issued for those. Purely a
     // record of what happened; Reopen does not undo this or hand the
-    // gadgets back.
+    // gadgets back. Kept alongside `fulfilledItems` (below) rather than
+    // replaced by it, since it's still the cheapest way to cross-check
+    // "is this asset still exactly as it was when issued" against a
+    // *live* Gadget record.
     this.fulfilledGadgetIds = Array.isArray(data.fulfilledGadgetIds) ? data.fulfilledGadgetIds : [];
+    // One snapshot per row Process Request actually issued — every row on
+    // that document, not just the ones that matched a real Gadget.
+    // fulfilledGadgetIds alone can't represent a hand-typed row (e.g. a
+    // consumable like a power cable that isn't tracked as its own
+    // serialized asset in Manage — see ProcessRequestModal's own doc
+    // comment on hand-added blank rows): it has no gadget id to record,
+    // so before this field existed it was silently dropped from "Actually
+    // Served" entirely even though it was printed and handed over. Each
+    // entry is `{ gadgetId, category, serialNumber, warehouseAssetTag,
+    // assetTagDefault, macAddress, password, merchant, description, user }`
+    // — `gadgetId` is null for a hand-typed row. RequisitionController's
+    // fulfillment log prefers the *live* Gadget (via gadgetId) when one
+    // still exists, and falls back to this frozen snapshot otherwise —
+    // which is also what covers a real asset later deleted from Manage.
+    this.fulfilledItems = Array.isArray(data.fulfilledItems)
+      ? data.fulfilledItems.map((i) => ({
+          gadgetId: i.gadgetId || null,
+          category: i.category || '',
+          serialNumber: i.serialNumber || '',
+          warehouseAssetTag: i.warehouseAssetTag || '',
+          assetTagDefault: i.assetTagDefault || '',
+          macAddress: i.macAddress || '',
+          password: i.password || '',
+          merchant: i.merchant || '',
+          description: i.description || '',
+          role: i.role || '',
+          user: i.user || ''
+        }))
+      : [];
   }
 
   /** Validates a raw form payload before it becomes a Requisition. */

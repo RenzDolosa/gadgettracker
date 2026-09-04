@@ -120,14 +120,34 @@ export class ManageView {
   }
 
   /**
-   * @param {object} info - { totalItems, selectedCount, page, pageSize, totalPages }
-   * @param {object} handlers - { onPrevPage, onNextPage, onPageClick(page), onPageSizeChange(size), onGotoPage(page) }
+   * @param {object} info - { totalItems, selectedCount, page, pageSize, totalPages, allPageSelected, allFilteredSelected }
+   * @param {object} handlers - { onPrevPage, onNextPage, onPageClick(page), onPageSizeChange(size), onGotoPage(page), onSelectAllFiltered(), onClearSelection() }
    */
   renderFooter(info, handlers) {
-    const { totalItems, selectedCount, page, pageSize, totalPages } = info;
+    const { totalItems, selectedCount, page, pageSize, totalPages, allPageSelected = false, allFilteredSelected = false } = info;
 
     this.refs.resultCount.textContent = `${fmtInt(totalItems)} ${totalItems === 1 ? 'asset' : 'assets'}`;
     this.refs.selectedCount.textContent = `Checked ${fmtInt(selectedCount)}`;
+
+    // "Select all N filtered" — only worth offering once the whole
+    // current page is already checked AND there's more beyond it to
+    // reach; otherwise it'd either be redundant (nothing more to select)
+    // or misleading (offering to reach rows before the page itself is
+    // even fully checked). See ManageController.render()'s own comment
+    // for how allPageSelected/allFilteredSelected are derived.
+    const selectAllBtn = this.refs.selectAllFilteredBtn;
+    if (selectAllBtn) {
+      const show = allPageSelected && !allFilteredSelected;
+      selectAllBtn.style.display = show ? '' : 'none';
+      if (show) selectAllBtn.textContent = `Select all ${fmtInt(totalItems)} filtered assets`;
+      selectAllBtn.onclick = () => handlers.onSelectAllFiltered();
+    }
+
+    const clearSelectionBtn = this.refs.clearSelectionBtn;
+    if (clearSelectionBtn) {
+      clearSelectionBtn.style.display = selectedCount > 0 ? '' : 'none';
+      clearSelectionBtn.onclick = () => handlers.onClearSelection();
+    }
 
     renderPagination(this.refs, { page, pageSize, totalPages }, handlers);
   }

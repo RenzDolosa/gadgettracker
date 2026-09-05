@@ -36,40 +36,53 @@ function activityTypeLabel(type) {
  * no date range is set, or to "created within the picked range" when one
  * is, so every category (not just Recent Activity) can answer either
  * "what does this look like today" or "what got added this period"
- * depending on that one shared setting. */
+ * depending on that one shared setting.
+ *
+ * `header` is this category's own CSV column row — each category gets
+ * its own header block in the export (see _exportSummary's `blocks`)
+ * rather than every category sharing one generic `Section, Label, Count,
+ * Assigned, Date` row, so a reader opening e.g. a Gadgets-by-Warehouse-
+ * only export sees "Allocation", not a vague "Label" that only makes
+ * sense once you know which section you're looking at. `rows()` below
+ * must emit exactly as many fields as `header` has columns. */
 const EXPORT_CATEGORIES = [
   {
     key: 'category',
     label: 'Gadgets by Category',
+    header: ['Section', 'Category', 'Count', 'Assigned'],
     rows: (ctrl, { gadgets }) => ctrl._categoryBreakdownWithAssigned(gadgets)
       .map((r) => ['Gadgets by Category', r.label, r.count, r.assigned])
   },
   {
     key: 'warehouse',
     label: 'Gadgets by Warehouse',
+    header: ['Section', 'Allocation', 'Count'],
     rows: (ctrl, { gadgets }) => ctrl._countBy(gadgets, (g) => g.warehouse || 'Unassigned')
-      .map((r) => ['Gadgets by Warehouse', r.label, r.count, ''])
+      .map((r) => ['Gadgets by Warehouse', r.label, r.count])
   },
   {
     key: 'position',
     label: 'Gadgets by Position Type',
+    header: ['Section', 'Position', 'Count'],
     rows: (ctrl, { gadgets }) => ctrl._countBy(gadgets, (g) => ctrl._positionLabel(g))
-      .map((r) => ['Gadgets by Position Type', r.label, r.count, ''])
+      .map((r) => ['Gadgets by Position Type', r.label, r.count])
   },
   {
     key: 'inventoryAssets',
     label: 'Inventory Assets',
+    header: ['Section', 'Category', 'Count'],
     rows: (ctrl, { inventoryAssets }) => ctrl._countBy(inventoryAssets, (a) => a.category || 'Uncategorized')
-      .map((r) => ['Inventory Assets by Category', r.label, r.count, ''])
+      .map((r) => ['Inventory Assets by Category', r.label, r.count])
   },
   {
     key: 'locations',
     label: 'Warehouse Locations',
+    header: ['Section', 'Warehouse', 'Count'],
     rows: (ctrl, { gadgets, locations }) => [
       ...ctrl._countBy(locations, (loc) => TYPE_LABEL[loc.property] || loc.property || 'Unspecified')
-        .map((r) => ['Warehouse Locations by Type', r.label, r.count, '']),
+        .map((r) => ['Warehouse Locations by Type', r.label, r.count]),
       ...ctrl._countBy(gadgets, (g) => g.merchant || 'Unassigned')
-        .map((r) => ['Warehouse Locations by Merchant', r.label, r.count, ''])
+        .map((r) => ['Warehouse Locations by Merchant', r.label, r.count])
     ]
   }
 ];
@@ -538,53 +551,96 @@ export class ReportsController {
       }
     }
 
-    const rows = [];
+    // Each section gets its own header + rows (a "block") instead of one
+    // generic `Section, Label, Count, Assigned, Date` row shared by every
+    // section — a block is only added when it actually has rows, so
+    // ticking one lone checkbox produces a single clean table rather than
+    // a stray header sitting over zero data. Blocks are stacked into one
+    // CSV (see `blocks.map(...).join` below) separated by a blank line,
+    // so exporting several sections at once still reads as distinct
+    // tables rather than mixing e.g. warehouse names and position types
+    // under one ambiguous column.
+    const blocks = [];
+
     if (range) {
-      rows.push(['Report Period', 'Start', fmtLocalDateStamp(new Date(range.startMs)), '']);
-      rows.push(['Report Period', 'End', fmtLocalDateStamp(new Date(range.endMs)), '']);
-      rows.push(['Report Period', 'Warehouse Filter', this._effectiveOwnerFilter() === 'all' ? 'All' : this._effectiveOwnerFilter(), '']);
+      blocks.push({
+        header: ['Section', 'Field', 'Value'],
+        rows: [
+          ['Report Period', 'Start', fmtLocalDateStamp(new Date(range.startMs))],
+          ['Report Period', 'End', fmtLocalDateStamp(new Date(range.endMs))],
+          ['Report Period', 'Warehouse Filter', this._effectiveOwnerFilter() === 'all' ? 'All' : this._effectiveOwnerFilter()]
+        ]
+      });
     }
 
-    selectedCategories.forEach((c) => rows.push(...c.rows(this, scope)));
+    selectedCategories.forEach((c) => {
+      const rows = c.rows(this, scope);
+      if (rows.length) blocks.push({ header: c.header, rows });
+    });
 
     if (selectedActivityTypes.size > 0) {
       if (range) {
-        this._countBy(activityEntries, (e) => activityTypeLabel(e.type))
-          .forEach((r) => rows.push(['Activity by Type', r.label, r.count, '']));
+        const typeRows = this._countBy(activityEntries, (e) => activityTypeLabel(e.type))
+          .map((r) => ['Activity by Type', r.label, r.count]);
+        if (typeRows.length) blocks.push({ header: ['Section', 'Type', 'Count'], rows: typeRows });
       }
-      [...activityEntries]
+      // Asset/actor/timestamp are already separate fields on every entry
+      // (see _recentActivity — assetLabel and performedBy are set
+      // independently of message/timestamp), so they go straight into
+      // their own Assets/Assigned/Date columns rather than being
+      // concatenated into one "asset — by actor" string the way this
+      // used to read under the old shared Assigned column.
+      const activityRows = [...activityEntries]
         .sort((a, b) => (range ? a.timestamp - b.timestamp : b.timestamp - a.timestamp)) // ranged: oldest-first timeline; snapshot: newest-first, same as the dashboard feed
-        .forEach((e) => rows.push(['Recent Activity', e.message, fmtLocalDateTime(e.timestamp), `${e.assetLabel} — by ${e.performedBy || 'Unknown'}`]));
+        .map((e) => ['Recent Activity', e.message, e.assetLabel, e.performedBy || 'Unknown', fmtLocalDateTime(e.timestamp)]);
+      if (activityRows.length) {
+        blocks.push({ header: ['Section', 'Label', 'Assets', 'Assigned', 'Date'], rows: activityRows, plainHeaders: ['Date'] });
+      }
     }
 
     if (includeRequisitions) {
+      const requisitionRows = [];
       [...requisitionEntries]
         .sort((a, b) => (range ? a.createdAt - b.createdAt : b.createdAt - a.createdAt)) // same ranged-vs-snapshot ordering as Recent Activity above
         .forEach((r) => {
           const itemsSummary = r.items.map((i) => `${i.category} × ${i.qty}`).join(', ') || 'No items';
-          rows.push([
+          requisitionRows.push([
             'Recent Requisitions',
             r.requesterName || 'Unnamed requester',
             itemsSummary,
             `${r.purpose || 'No purpose given'} — by ${r.submittedBy || 'Unknown'}`,
             fmtLocalDateTime(r.createdAt)
           ]);
-          rows.push(...this._servedRowsForExport(r));
+          requisitionRows.push(...this._servedRowsForExport(r));
         });
+      if (requisitionRows.length) {
+        blocks.push({ header: ['Section', 'Label', 'Count', 'Assigned', 'Date'], rows: requisitionRows, plainHeaders: ['Date'] });
+      }
+    }
+
+    // Only reachable outside a date range (the `range` branch above already
+    // guards this case) — e.g. the only checkbox left checked is an
+    // Activity type with zero matching entries right now. Since every
+    // block is now its own header, an empty `blocks` array has no header
+    // row to fall back on the way the old single-shared-header CSV did,
+    // so this needs its own explicit check rather than silently
+    // downloading a blank file.
+    if (blocks.length === 0) {
+      Toast.show('Nothing to export for the selected categories.');
+      return false;
     }
 
     const filename = range
       ? `stockroom-report-${fmtLocalDateStamp(new Date(range.startMs))}-to-${fmtLocalDateStamp(new Date(range.endMs))}.csv`
       : `stockroom-report-${fmtLocalDateStamp()}.csv`;
-    // Padded to 5 columns rather than reworking every section's own
-    // row-building code above to always emit a 5th field: only Recent
-    // Requisitions' rows (summary + served, both above) actually use
-    // Date, so every other section's shorter rows are left-padded with
-    // '' here in one place instead of scattering `, ''` through each of
-    // EXPORT_CATEGORIES' row() functions and the Report Period/Activity
-    // pushes for a column that's meaningless to them.
-    const paddedRows = rows.map((r) => (r.length >= 5 ? r : [...r, ...Array(5 - r.length).fill('')]));
-    const csv = toCsv(['Section', 'Label', 'Count', 'Assigned', 'Date'], paddedRows, { plainHeaders: ['Date'] });
+    // Each block renders as its own header + rows via toCsv, then blocks
+    // are joined with a blank line between them — a plain CSV has no
+    // native concept of "multiple tables", but a blank row between
+    // differently-shaped header blocks is exactly how Excel/Sheets expect
+    // to see one file hold several distinct tables.
+    const csv = blocks
+      .map((b) => toCsv(b.header, b.rows, { plainHeaders: b.plainHeaders || [] }))
+      .join('\r\n\r\n');
     downloadCsv(csv, filename);
     Toast.success(`Exported ${selectedCategories.length} categor${selectedCategories.length === 1 ? 'y' : 'ies'}${range ? ` for ${fmtLocalDateStamp(new Date(range.startMs))} to ${fmtLocalDateStamp(new Date(range.endMs))}` : ''} to CSV.`);
     return true;

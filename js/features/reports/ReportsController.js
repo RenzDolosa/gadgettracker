@@ -543,8 +543,6 @@ export class ReportsController {
       rows.push(['Report Period', 'Start', fmtLocalDateStamp(new Date(range.startMs)), '']);
       rows.push(['Report Period', 'End', fmtLocalDateStamp(new Date(range.endMs)), '']);
       rows.push(['Report Period', 'Warehouse Filter', this._effectiveOwnerFilter() === 'all' ? 'All' : this._effectiveOwnerFilter(), '']);
-    } else {
-      this._stats(allGadgets).forEach((s) => rows.push(['Stat', s.label, s.value, '']));
     }
 
     selectedCategories.forEach((c) => rows.push(...c.rows(this, scope)));
@@ -568,17 +566,79 @@ export class ReportsController {
             'Recent Requisitions',
             r.requesterName || 'Unnamed requester',
             itemsSummary,
-            `${r.purpose || 'No purpose given'} — by ${r.submittedBy || 'Unknown'} on ${fmtLocalDateTime(r.createdAt)}`
+            `${r.purpose || 'No purpose given'} — by ${r.submittedBy || 'Unknown'}`,
+            fmtLocalDateTime(r.createdAt)
           ]);
+          rows.push(...this._servedRowsForExport(r));
         });
     }
 
     const filename = range
       ? `stockroom-report-${fmtLocalDateStamp(new Date(range.startMs))}-to-${fmtLocalDateStamp(new Date(range.endMs))}.csv`
       : `stockroom-report-${fmtLocalDateStamp()}.csv`;
-    const csv = toCsv(['Section', 'Label', 'Count', 'Assigned'], rows);
+    // Padded to 5 columns rather than reworking every section's own
+    // row-building code above to always emit a 5th field: only Recent
+    // Requisitions' rows (summary + served, both above) actually use
+    // Date, so every other section's shorter rows are left-padded with
+    // '' here in one place instead of scattering `, ''` through each of
+    // EXPORT_CATEGORIES' row() functions and the Report Period/Activity
+    // pushes for a column that's meaningless to them.
+    const paddedRows = rows.map((r) => (r.length >= 5 ? r : [...r, ...Array(5 - r.length).fill('')]));
+    const csv = toCsv(['Section', 'Label', 'Count', 'Assigned', 'Date'], paddedRows, { plainHeaders: ['Date'] });
     downloadCsv(csv, filename);
     Toast.success(`Exported ${selectedCategories.length} categor${selectedCategories.length === 1 ? 'y' : 'ies'}${range ? ` for ${fmtLocalDateStamp(new Date(range.startMs))} to ${fmtLocalDateStamp(new Date(range.endMs))}` : ''} to CSV.`);
     return true;
+  }
+
+  /** One CSV row per item Process Request actually issued against a
+   * finished requisition — the export's counterpart to "Actually Served"
+   * in RequisitionController._openFulfillmentLog (same section, just
+   * flattened to CSV rows instead of a table). Same live-vs-snapshot
+   * fallback as that modal: prefer the current Gadget when `gadgetId`
+   * still resolves (via `this.store`, the Gadget store every other card
+   * on this dashboard already reads from) — picking up anything that's
+   * changed since issuance, like a pending transfer that's since been
+   * confirmed — and fall back to the frozen `fulfilledItems` snapshot
+   * recorded at issue time otherwise, which is the *only* data available
+   * for a hand-typed row (no backing Gadget to begin with — e.g. a power
+   * cable that isn't tracked as its own serialized asset) or a real asset
+   * since deleted from Manage. Returns [] for a requisition that isn't
+   * finished, was finished by hand (no items ever recorded), or — for a
+   * requisition finished before `fulfilledItems` existed — one whose
+   * `fulfilledGadgetIds` no longer resolve to anything in Manage.
+   *
+   * Each row's Date column is `requisition.servedAt` — when Process
+   * Request actually issued this batch (see ProcessRequestModal.js's
+   * applyProcessing, the only writer of that field) — blank for a
+   * requisition finished before servedAt existed, since there's nothing
+   * to report for those.
+   */
+  _servedRowsForExport(requisition) {
+    if (requisition.status !== 'finished') return [];
+    const hasSnapshots = (requisition.fulfilledItems || []).length > 0;
+    const items = hasSnapshots
+      ? requisition.fulfilledItems
+      : (requisition.fulfilledGadgetIds || []).map((gid) => ({ gadgetId: gid }));
+    const servedAt = requisition.servedAt ? fmtLocalDateTime(requisition.servedAt) : '';
+
+    const rows = [];
+    items.forEach((item) => {
+      const live = item.gadgetId ? this.store.get(item.gadgetId) : null;
+      const hasSnapshot = Boolean(item.category || item.serialNumber || item.user || item.merchant);
+      if (item.gadgetId && !live && !hasSnapshot) return; // legacy id-only entry, asset gone — nothing to show
+      const source = live || item;
+      // No Gadget Type recorded means no asset was actually picked for
+      // this row — see RequisitionController._openFulfillmentLog's own
+      // identical skip for why this isn't a real served item.
+      if (!source.category) return;
+      rows.push([
+        'Recent Requisitions — Served',
+        requisition.requesterName || 'Unnamed requester',
+        source.category || 'Uncategorized',
+        `Serial: ${source.serialNumber || '—'} · Tag: ${source.warehouseAssetTag || '—'} · User: ${source.user || '—'} · Merchant: ${source.merchant || '—'}`,
+        servedAt
+      ]);
+    });
+    return rows;
   }
 }

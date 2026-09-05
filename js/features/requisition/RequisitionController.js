@@ -261,6 +261,14 @@ export class RequisitionController {
         return;
       }
       const source = live || item;
+      // No Gadget Type recorded means no asset was actually picked for
+      // this row — e.g. a Process Request row that only ever got a
+      // Merchant/User auto-filled onto it (see ProcessRequestModal.js's
+      // syncMerchantToTransferTo) but was left without a gadget chosen.
+      // That's not a real served item, hand-typed or otherwise — same
+      // treatment as isRowBlank() there — so it's skipped here too
+      // rather than showing up as "Uncategorized".
+      if (!source.category) return;
       servedRows.push(`
         <tr>
           <td>${esc(source.category || 'Uncategorized')}</td>

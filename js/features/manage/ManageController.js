@@ -987,10 +987,19 @@ export class ManageController {
   }
 
   /** Withdraws a pending transfer without applying it — merchant/positionType/warehouse/
-   * owner are untouched, exactly as if the request had never been made. Open to the same
-   * people who can confirm, plus manage.edit.merchant holders (the same permission that
-   * could have requested it in the first place, so they can also take it back). `silent`
-   * — see confirmTransfer's own doc comment just above. */
+   * owner are untouched, exactly as if the request had never been made. If the pending
+   * transfer carries a `previousUser` (only set when it was created alongside issuing the
+   * asset to a person — see ProcessRequestModal.js's applyProcessing), the user is put
+   * back to that value too, since issuing-and-transferring was one combined action and
+   * cancelling undoes both halves. That restore is written directly through store.update
+   * rather than through _logFieldChanges' "Reassigned from X to Y" ('user'-type) log entry
+   * — Gadget.getLastResponsible() reads the *last* 'user' log entry as "recent
+   * responsible", and a cancelled, never-actually-completed handoff shouldn't count as
+   * one. A plain Manifest merchant transfer never sets `previousUser`, so this leaves
+   * `user` alone for that case, same as before. Open to the same people who can confirm,
+   * plus manage.edit.merchant holders (the same permission that could have requested it in
+   * the first place, so they can also take it back). `silent` — see confirmTransfer's own
+   * doc comment just above. */
   cancelPendingTransfer(id, { silent = false } = {}) {
     const gadget = this.store.get(id);
     if (!gadget || !gadget.pendingTransfer) return;
@@ -999,8 +1008,17 @@ export class ManageController {
       return;
     }
     const p = gadget.pendingTransfer;
-    gadget.addLogEntry(`Transfer to '${p.toMerchant}' cancelled before confirmation.`, 'transfer', { from: p.toMerchant, to: gadget.merchant || '' }, getOperatorName());
-    this.store.update(gadget.id, { pendingTransfer: null });
+    const restoresUser = Object.prototype.hasOwnProperty.call(p, 'previousUser');
+    gadget.addLogEntry(
+      `Transfer to '${p.toMerchant}' cancelled before confirmation.${restoresUser ? ` User reassignment undone — reverted to '${p.previousUser || 'Unassigned'}'.` : ''}`,
+      'transfer',
+      { from: p.toMerchant, to: gadget.merchant || '' },
+      getOperatorName()
+    );
+    this.store.update(gadget.id, {
+      pendingTransfer: null,
+      ...(restoresUser ? { user: p.previousUser } : {})
+    });
     if (!silent) Toast.show(`Pending transfer to '${p.toMerchant}' cancelled.`);
   }
 

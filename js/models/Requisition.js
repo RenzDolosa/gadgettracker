@@ -70,6 +70,17 @@ export class Requisition {
           user: i.user || ''
         }))
       : [];
+    // When this requisition was actually issued against via Process
+    // Request (see ProcessRequestModal.js's applyProcessing, the only
+    // writer of this field alongside fulfilledItems/fulfilledGadgetIds
+    // above) — null for one finished by hand instead, or one finished
+    // before this field existed. Powers the "Date" column on "Actually
+    // Served" rows in the requisition export (ReportsController's
+    // _servedRowsForExport); nothing currently shows it in the on-screen
+    // fulfillment log, but it's recorded here rather than per-item since
+    // every row issued in one Process Request session happens at the
+    // same moment.
+    this.servedAt = data.servedAt || null;
   }
 
   /** Validates a raw form payload before it becomes a Requisition. */

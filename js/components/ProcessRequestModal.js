@@ -212,6 +212,10 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
 
   const tbody = body.querySelector('[data-role="pr-body"]');
   const summaryBody = body.querySelector('[data-role="pr-summary-body"]');
+  // Declared up front (before the initial renderRows/recomputeSummary
+  // call below) because recomputeSummary calls updateSelectAssetButtonState,
+  // which reads this element — it must exist before that first render.
+  const selectAssetBtn = footerExtra.querySelector('[data-action="select-asset"]');
 
   body.querySelector('[data-meta="preparedBy"]').value = defaultPreparedBy || getOperatorName();
   body.querySelector('[data-meta="date"]').value = fmtManifestDate();
@@ -314,7 +318,10 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
     }
     updateIssueButtonState();
   }
-  transferToInput.addEventListener('input', updatePlacementPreview);
+  transferToInput.addEventListener('input', () => {
+    updatePlacementPreview();
+    syncMerchantToTransferTo();
+  });
   warehousePickSelect.addEventListener('change', () => {
     selectedWarehouseId = warehousePickSelect.value;
     updatePlacementPreview();
@@ -356,6 +363,52 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
       `<tr><td>${esc(type)}</td><td>${count}</td></tr>`
     ).join('') || '<tr><td colspan="2" style="color:var(--ink-faint);">No rows yet</td></tr>';
     summaryBody.innerHTML = rowsHTML + `<tr class="manifest-summary-grand"><td>Grand Total</td><td>${grandTotal}</td></tr>`;
+    updateSelectAssetButtonState();
+  }
+
+  /** Every row on this document shares one physical destination — the
+   * merchant cell for each row always mirrors wherever "Transfer to"
+   * currently points, same single-destination model as a Manifest
+   * transfer. This only updates what's shown/printed here; the
+   * underlying Gadget record isn't touched until Issue / Print
+   * (applyProcessing) actually runs. */
+  function syncMerchantToTransferTo() {
+    const value = transferToInput.value.trim();
+    if (!value) return;
+    qsa('input[data-field="merchant"]', tbody).forEach((input) => { input.value = value; });
+  }
+
+  /** True when a row has no Gadget Type set yet — i.e. it's still an
+   * unused placeholder (from blankRow(), typically the modal's own
+   * initial row when it opened with nothing pre-selected) rather than a
+   * row with a real asset or hand-typed item in it. Deliberately checks
+   * category alone, not every column: Merchant gets pre-filled onto
+   * every row by syncMerchantToTransferTo() as soon as "Transfer to" has
+   * a value, which would otherwise make a still-empty row look "used"
+   * and stop Select Asset from filling it in place. */
+  function isRowBlank(tr) {
+    const categoryInput = tr.querySelector('input[data-field="category"]');
+    return !categoryInput || categoryInput.value.trim() === '';
+  }
+
+  /** First still-empty row in the table, if any — Select Asset fills
+   * this in place instead of appending, so picking assets doesn't leave
+   * a stray blank row sitting above/between the rows it just added. */
+  function findFirstBlankRow() {
+    return qsa('tr[data-row-id]', tbody).find(isRowBlank) || null;
+  }
+
+  /** Repurposes an existing (blank) row's cells and identity for a
+   * chosen Gadget, in place — same as rendering a fresh row from
+   * rowFromGadget, just without creating a new <tr> or losing whatever
+   * event bindings are already on this one. */
+  function fillRowWithGadget(tr, gadget) {
+    tr.setAttribute('data-row-id', gadget.id);
+    const rowData = rowFromGadget(gadget);
+    COLUMNS.forEach((c) => {
+      const input = tr.querySelector(`input[data-field="${c.key}"]`);
+      if (input) input.value = rowData[c.key];
+    });
   }
 
   function bindRowEvents() {
@@ -376,6 +429,7 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
     tbody.insertAdjacentHTML('beforeend', rowHTML(blankRow()));
     bindRowEvents();
     recomputeSummary();
+    syncMerchantToTransferTo();
     const lastInput = tbody.querySelector('tr:last-child input');
     lastInput?.focus();
   });
@@ -385,7 +439,6 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
   // instead of typing (or hand-copying) every field — same underlying
   // Gadget records the Manage grid itself lists, filtered down to just
   // what this request could plausibly be fulfilled with.
-  const selectAssetBtn = footerExtra.querySelector('[data-action="select-asset"]');
 
   /** Category → requested qty for whichever Requisition is currently
    * picked, or null if none is picked yet — the picker has nothing to
@@ -401,6 +454,38 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
     return map;
   }
 
+  /** Category → how many rows already on the document carry that
+   * category — counts hand-typed rows too, not just asset-backed ones,
+   * since either way it's already accounted for against the requested
+   * quantity. Blank/placeholder rows (empty category) don't count. */
+  function existingCategoryCounts() {
+    const counts = new Map();
+    qsa('input[data-field="category"]', tbody).forEach((input) => {
+      const value = input.value.trim();
+      if (!value) return;
+      counts.set(value, (counts.get(value) || 0) + 1);
+    });
+    return counts;
+  }
+
+  /** Category → qty still left to fulfill, i.e. requested minus however
+   * many rows already carry that category. This is what actually caps
+   * Select Asset — requestedCategoryQtys() alone would let someone
+   * re-open the picker after already fulfilling a category and select
+   * past the requested amount, since each picker session only capped
+   * itself against the *full* requested qty, not what earlier sessions
+   * (or pre-filled/hand-typed rows) already added. */
+  function remainingCategoryQtys() {
+    const requested = requestedCategoryQtys();
+    if (!requested) return null;
+    const existing = existingCategoryCounts();
+    const remaining = new Map();
+    requested.forEach((qty, category) => {
+      remaining.set(category, Math.max(0, qty - (existing.get(category) || 0)));
+    });
+    return remaining;
+  }
+
   /** Same "available" definition RequisitionController itself uses
    * (_computeAvailableByCategory's own doc comment): a gadget "sits at" a
    * WarehouseLocation flagged isDefaultStockRoom when its `merchant`
@@ -411,15 +496,22 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
   }
 
   function updateSelectAssetButtonState() {
-    const ready = Boolean(requestedCategoryQtys());
-    selectAssetBtn.disabled = !ready;
-    selectAssetBtn.title = ready ? '' : 'Select a requisition first.';
+    const remaining = remainingCategoryQtys();
+    if (!remaining) {
+      selectAssetBtn.disabled = true;
+      selectAssetBtn.title = 'Select a requisition first.';
+      return;
+    }
+    const hasRemaining = [...remaining.values()].some((qty) => qty > 0);
+    selectAssetBtn.disabled = !hasRemaining;
+    selectAssetBtn.title = hasRemaining ? '' : 'The requested quantity has already been added.';
   }
 
   function openAssetPicker() {
     const categoryQtys = requestedCategoryQtys();
-    if (!categoryQtys || !gadgetStore) return;
-    const requestedCategories = new Set(categoryQtys.keys());
+    const remainingQtys = remainingCategoryQtys();
+    if (!categoryQtys || !remainingQtys || !gadgetStore) return;
+    const requestedCategories = new Set([...remainingQtys.entries()].filter(([, qty]) => qty > 0).map(([category]) => category));
     const stockCodes = defaultStockRoomCodes();
     const alreadyRowIds = new Set(qsa('tr[data-row-id]', tbody).map((tr) => tr.getAttribute('data-row-id')));
 
@@ -429,10 +521,15 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
       !alreadyRowIds.has(g.id)
     );
 
+    const hasPartialFulfillment = [...categoryQtys.entries()].some(([cat, qty]) => (remainingQtys.get(cat) || 0) < qty);
     const pickerBody = el(`
       <div>
         <div style="margin-bottom: 10px; color: var(--ink-faint); font-size: 13px;">
-          Requested: ${[...categoryQtys.entries()].map(([cat, qty]) => `${esc(cat)} × ${qty}`).join(', ')}
+          Requested: ${[...categoryQtys.entries()].map(([cat, qty]) => `${esc(cat)} × ${qty}`).join(', ')}${
+            hasPartialFulfillment
+              ? ` — still needed: ${[...remainingQtys.entries()].map(([cat, qty]) => `${esc(cat)} × ${qty}`).join(', ')}`
+              : ''
+          }
         </div>
         ${eligible.length > 0 ? '<input type="text" class="asset-picker-search" data-role="asset-picker-search" placeholder="Search by category, serial, asset tag, or merchant…">' : ''}
         <div class="asset-picker-list" data-role="asset-picker-list"></div>
@@ -442,7 +539,7 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
     const listEl = pickerBody.querySelector('[data-role="asset-picker-list"]');
 
     if (eligible.length === 0) {
-      listEl.innerHTML = `<div style="color: var(--ink-faint); padding: 12px 0;">No available ${[...requestedCategories].join(' / ')} currently in stock.</div>`;
+      listEl.innerHTML = `<div style="color: var(--ink-faint); padding: 12px 0;">${requestedCategories.size === 0 ? 'The requested quantity has already been added.' : `No available ${[...requestedCategories].join(' / ')} currently in stock.`}</div>`;
     } else {
       listEl.innerHTML = eligible.map((g) => {
         const category = g.category || 'Uncategorized';
@@ -499,7 +596,7 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
           return;
         }
         const category = cb.getAttribute('data-picker-category');
-        const atCap = (checkedCountByCategory.get(category) || 0) >= (categoryQtys.get(category) || 0);
+        const atCap = (checkedCountByCategory.get(category) || 0) >= (remainingQtys.get(category) || 0);
         cb.disabled = atCap;
         cb.closest('.asset-picker-row')?.classList.toggle('asset-picker-row--disabled', atCap);
       });
@@ -522,10 +619,20 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
             checked.forEach((id) => {
               const gadget = gadgetStore.get(id);
               if (!gadget) return;
-              tbody.insertAdjacentHTML('beforeend', rowHTML(rowFromGadget(gadget)));
+              // Fill an existing empty row in place first (e.g. the
+              // modal's own starter blankRow()) instead of always
+              // appending — only once every blank row is used up does a
+              // selection actually add a new one at the bottom.
+              const blankTr = findFirstBlankRow();
+              if (blankTr) {
+                fillRowWithGadget(blankTr, gadget);
+              } else {
+                tbody.insertAdjacentHTML('beforeend', rowHTML(rowFromGadget(gadget)));
+              }
             });
             bindRowEvents();
             recomputeSummary();
+            syncMerchantToTransferTo();
             m.close();
           }
         }
@@ -623,6 +730,13 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
         // empty pair of quotes in a permanent history entry reads as a
         // rendering glitch, not "this gadget didn't have a merchant yet."
         const previousMerchant = gadget.merchant || 'None';
+        // Captured before the update below overwrites it — lets a later
+        // cancelPendingTransfer put the user back exactly as it was
+        // before this issuance, since issuing to a person and requesting
+        // their transfer are one combined action here (see this
+        // function's own doc comment above) and cancelling should undo
+        // both halves, not just the merchant side.
+        const previousUser = gadget.user || '';
 
         if (placement.matched) {
           gadget.addLogEntry(
@@ -640,7 +754,8 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
               toOwner: placement.owner,
               toWarehouseId: destinationWarehouseId(placement),
               requestedAt,
-              requestedBy
+              requestedBy,
+              previousUser
             }
           });
           pendingCount++;
@@ -680,7 +795,7 @@ export function openProcessRequestModal({ gadgets = [], requisitions = [], gadge
     }
 
     if (requisitionStore && requisitionId) {
-      requisitionStore.update(requisitionId, { status: 'finished', fulfilledGadgetIds: issuedIds, fulfilledItems });
+      requisitionStore.update(requisitionId, { status: 'finished', fulfilledGadgetIds: issuedIds, fulfilledItems, servedAt: requestedAt });
     }
 
     if (pendingCount > 0) {

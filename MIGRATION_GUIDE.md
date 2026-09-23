@@ -35,15 +35,19 @@ Nothing in `ManageController.js`, `InventoryAssetController.js`,
 
 1. **Create a Supabase project** at supabase.com (if you haven't already).
 2. **Run the schema**: Supabase dashboard → SQL Editor → paste the contents
-   of `supabase/schema.sql` → Run. This creates all 6 tables, RLS policies,
-   and adds the tables to the realtime publication.
+   of `supabase/schema.sql` → Run. This creates all 8 tables (the
+   original 6 below, plus `requisitions` and `employee_credentials`
+   added later — see "Security: authentication"), RLS policies, and
+   adds the tables to the realtime publication.
 3. **(Optional) Seed demo data**: same SQL Editor → paste
    `supabase/seed.sql` → Run. Skip this if you want the app to start empty.
 4. **Fill in credentials**: copy `env.example.js` → `env.js` (project
    root), then fill in `SUPABASE_URL` and `SUPABASE_ANON_KEY` there, from
    Supabase dashboard → Settings → API. The anon key is safe to ship
    client-side — RLS is what actually gates access (see below). `env.js`
-   is gitignored, so this never ends up in a tracked file.
+   is committed rather than gitignored in this project, since GitHub
+   Pages/Vercel serve it as-is with no build step to inject it
+   otherwise — safe to do given the anon key is meant to be public.
 5. **Serve the app** the same way you already do (it's still a plain
    `<script type="module">` app, no bundler) and open it. Check the browser
    console: `SupabaseStore` logs an error there if the client isn't
@@ -57,10 +61,13 @@ first:
    delete a warehouse and a location, confirm the tree updates.
 2. `inventory_assets` (Inventory Assets tab) — simplest CRUD shape, no
    cross-references.
-3. `gadgets` (Manage tab) — the biggest controller (1,095 lines), exercises
-   transfer/bulk actions, CSV import, merchant-placement derivation.
+3. `gadgets` (Manage tab) — the biggest controller by far (1,400+ lines
+   and still growing), exercises transfer/bulk actions, CSV import,
+   merchant-placement derivation.
 4. `user_accounts` + `user_groups` (Settings → User management) — verify
    the "bound username" cross-reference between the two still resolves.
+5. `requisitions` (Requisition tab, added after this migration doc was
+   first written) — verify submit → process → fulfillment log round-trips.
 
 To do this incrementally, just leave the stores you haven't migrated yet as
 `new Store({...})` (old localStorage) in `app.js` and only swap one

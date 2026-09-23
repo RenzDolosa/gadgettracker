@@ -42,11 +42,16 @@ variables) — the same pattern this app already uses for every other form
    existing Supabase session.
 2. **No session** → login screen shows. Person signs in or creates an
    account.
-   - Sign-up behavior depends on your project's Auth setting
-     (Authentication → Providers → Email → "Confirm email" toggle in the
-     Supabase dashboard): if it's on, they see a "check your email" notice
-     and must click the confirmation link before signing in; if it's off,
-     they're signed in immediately.
+   - Sign-up always completes immediately, regardless of your project's
+     Auth setting (Authentication → Providers → Email → "Confirm email"
+     toggle in the Supabase dashboard). `supabase/schema.sql`'s
+     `auto_confirm_email()` trigger marks every new `auth.users` row
+     confirmed the instant it's created, so that dashboard toggle no
+     longer has any effect here — added because the Free tier's email
+     sender is unreliable enough to leave a real, correctly-linked
+     account permanently unable to sign in, with an error
+     indistinguishable on screen from a typo'd password (see that
+     trigger's own comment in `schema.sql` for the full reasoning).
 3. **Session confirmed** → login screen hides, app shell (`#appShell`)
    is revealed, `startApp()` runs (builds all 6 stores, all controllers,
    tabs — exactly what used to run unconditionally).
@@ -60,8 +65,9 @@ variables) — the same pattern this app already uses for every other form
 
 1. Dashboard → Authentication → Providers → make sure **Email** is enabled
    (it is by default on a new project).
-2. Decide on **"Confirm email"** (same screen): on for anything
-   internet-facing: off is fine for a quick internal test.
+2. The **"Confirm email"** toggle on that same screen doesn't need a
+   decision either way — `schema.sql`'s `auto_confirm_email()` trigger
+   (see "How it behaves" above) bypasses it regardless of how it's set.
 3. Re-run `supabase/schema.sql` (or just the RLS section at the bottom) so
    policies require `authenticated` instead of `anon`.
 4. Create your first account through the app's own "Create account" tab —

@@ -3,7 +3,11 @@ gadget1.zip
 gadget2.zip
 
 # Runtime config — this project's ".env" equivalent (see env.js/
-# env.example.js's own doc comments). Holds real Supabase credentials for
-# this deployment; never commit it.
+# env.example.js's own doc comments). Deliberately left OUT of
+# .gitignore (commented out below): GitHub Pages/Vercel serve this
+# repo's files as-is with no build step to inject env.js's values at
+# deploy time, so it has to be committed for the deployed site to work.
+# Safe to commit — it only ever holds the public anon key, never the
+# service_role key. See env.js's own doc comment for the full reasoning.
 # env.js
 # .env

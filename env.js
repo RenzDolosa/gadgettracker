@@ -11,10 +11,15 @@
  * script tag, that sets a global object js/core/supabaseConfig.js reads
  * from at import time.
  *
- * This file is gitignored (see .gitignore) — it holds this deployment's
- * real credentials and is never committed. Copy env.example.js to
- * env.js (this file) and fill in your own project's values; see that
- * file for where to find them.
+ * This file is committed, not gitignored (see .gitignore) — this
+ * project's static hosts (GitHub Pages, Vercel) serve files as-is with
+ * no build step to inject secrets at deploy time, so the real
+ * SUPABASE_URL/ANON_KEY have to live in a plain, loadable file for the
+ * deployed site to work at all. That's fine: the anon key is meant to
+ * be public (see supabaseConfig.js's own doc comment) — Row Level
+ * Security is what actually gates data access, not keeping this file
+ * secret. Copy env.example.js to env.js (this file) and fill in your
+ * own project's values; see that file for where to find them.
  */
 window.__ENV__ = {
   SUPABASE_URL: 'https://ttoaqikahjckvukiohle.supabase.co',

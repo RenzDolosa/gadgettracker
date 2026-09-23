@@ -12,8 +12,9 @@
  * Read from window.__ENV__ (see env.js at the project root) rather than
  * hardcoded here directly — env.js is this project's ".env" equivalent:
  * a plain script, loaded by index.html before app.js's module script,
- * holding the real values for this deployment; it's gitignored, so
- * credentials never end up in a tracked file. The fallback strings below
+ * holding the real values for this deployment. It's committed, not
+ * gitignored (see env.js's own doc comment for why) — fine here since
+ * the anon key below is meant to be public. The fallback strings below
  * (still shaped like real values, just obviously placeholder ones) exist
  * purely so a fresh checkout without env.js set up yet fails through
  * supabaseClient.js's own isConfigured check with a clear console

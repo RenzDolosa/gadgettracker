@@ -1,0 +1,67 @@
+name: Claude Code Review
+
+# Runs an automated review on every PR — no @claude mention needed.
+# Requires an ANTHROPIC_API_KEY repository secret (Settings → Secrets and
+# variables → Actions → New repository secret), from console.anthropic.com.
+on:
+  pull_request:
+    types: [opened, synchronize]
+    # Optional: only re-run on source changes, skip docs-only PRs
+    # paths:
+    #   - "js/**"
+    #   - "css/**"
+    #   - "supabase/**"
+    #   - "index.html"
+
+jobs:
+  claude-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # write, not read — the step below posts its findings as a PR
+      # comment via `gh pr comment`, which needs write access.
+      pull-requests: write
+      issues: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Please review this pull request and provide feedback on:
+            - Code quality and best practices
+            - Potential bugs or issues
+            - Performance considerations
+            - Security concerns
+            - Test coverage
+
+            Read this repository's CLAUDE.md first for its architecture,
+            conventions, and known caveats. Several things that look like
+            bugs at a glance — env.js committed instead of gitignored, the
+            employee-portal credentials in supabaseConfig.js — are
+            documented, deliberate trade-offs explained in CLAUDE.md and in
+            those files' own doc comments. Read those before flagging them
+            as issues.
+
+            This is a vanilla-JS, no-build-step static site (see CLAUDE.md)
+            — don't suggest introducing a bundler, framework, or test
+            runner unless the PR itself is about that.
+
+            Be constructive and specific — reference file names and line
+            numbers where possible. If nothing of substance is wrong, say
+            so in one short sentence rather than padding the review.
+
+            Use `gh pr comment` with your Bash tool to leave your review as
+            a single comment on the PR.
+          claude_args: >-
+            --allowed-tools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+
+      # Full option reference: https://github.com/anthropics/claude-code-action
